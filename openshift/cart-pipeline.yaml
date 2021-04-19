@@ -15,9 +15,41 @@ items:
         uri: https://github.com/kxshuang/cart-service.git
       type: Git
     strategy:
-      type: JenkinsPipeline
       jenkinsPipelineStrategy:
-        jenkinsfilePath: Jenkinsfile
+        jenkinsfile: |-
+          node('maven') {
+            stage('Build') {
+              git url: "https://github.com/kxshuang/cart-service.git"
+              sh "mvn package"
+              stash name:"jar", includes:"target/cart.jar"
+            }
+            stage('Test') {
+              parallel(
+                "Cart Tests": {
+                  sh "mvn verify -P cart-tests"
+                },
+                "Discount Tests": {
+                sh "mvn verify -P discount-tests"
+                }
+              )
+            }
+            stage('Build Image') {
+              unstash name:"jar"
+              sh "oc start-build cart --from-file=target/cart.jar --follow"
+            }
+            stage('Deploy') {
+              openshift.withCluster() {
+                openshift.withProject() {
+                  def dc = openshift.selector('dc', "cart")
+                  dc.rollout().status()
+                }
+              }
+            }
+            stage('System Test') {
+              sh "curl -s -X POST http://cart:8080/api/cart/dummy/666/1"
+              sh "curl -s http://cart:8080/api/cart/dummy | grep 'Dummy Product'"
+            }
+          }
     triggers:
     - generic:
         secret: FiArdDBH
